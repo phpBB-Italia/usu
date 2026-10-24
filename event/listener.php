@@ -38,16 +38,16 @@ class listener implements EventSubscriberInterface
 	private string $hilit_words = '';
 
 	public function __construct(
-		private readonly core $core,
-		private readonly config $config,
-		private readonly auth $auth,
-		private readonly template $template,
-		private readonly user $user,
-		private readonly request $request,
-		private readonly db_driver $db,
-		private readonly language $language,
-		private readonly string $phpbb_root_path,
-		private readonly string $php_ext
+		private core $core,
+		private config $config,
+		private auth $auth,
+		private template $template,
+		private user $user,
+		private request $request,
+		private db_driver $db,
+		private language $language,
+		private string $phpbb_root_path,
+		private string $php_ext
 	) {
 	}
 
@@ -56,7 +56,7 @@ class listener implements EventSubscriberInterface
 		return [
 			'core.common'								=> 'core_common',
 			'core.user_setup'							=> 'core_user_setup',
-			'core.append_sid'							=> 'core_append_sid',
+			//'core.append_sid'							=> 'core_append_sid',
 			'core.pagination_generate_page_link'		=> 'core_pagination_generate_page_link',
 			'core.page_header_after'					=> 'core_page_header_after',
 			'core.page_footer'							=> 'core_page_footer',
@@ -92,7 +92,7 @@ class listener implements EventSubscriberInterface
 						$this->config['topics_per_page'] = $forum_data['forum_topics_per_page'];
 					}
 
-					$start = $this->core->seo_chk_start($this->start, $this->config['topics_per_page']);
+					$start = $this->core->seo_chk_start($this->start, (int) $this->config['topics_per_page']);
 
 					if ($this->start != $start)
 					{
@@ -219,11 +219,11 @@ class listener implements EventSubscriberInterface
 				{
 					if (!empty($post_id))
 					{
-						$this->start = floor(($topic_data['prev_posts']) / $this->config['posts_per_page']) * $this->config['posts_per_page'];
+												$this->start = (int) (floor(($topic_data['prev_posts']) / $this->config['posts_per_page']) * $this->config['posts_per_page']);
 					}
 				}
 
-				$start = $this->core->seo_chk_start($this->start, $this->config['posts_per_page']);
+				$start = $this->core->seo_chk_start($this->start, (int) $this->config['posts_per_page']);
 
 				if ($this->start != $start)
 				{
@@ -323,9 +323,54 @@ class listener implements EventSubscriberInterface
 
 	public function core_common(mixed $event): void
 	{
+		@error_reporting(E_ALL & ~E_NOTICE & ~E_WARNING & ~E_DEPRECATED);
+
+		// FIX PROFILI UTENTE COMPLESSI CON SEGNO PIÙ (+)
+		if (!empty($this->core->seo_opt['profile_inj']) && $this->request->is_set('un')) {
+			$un_param = $this->request->variable('un', '', true);
+			if (strpos($un_param, '+') !== false) {
+				$un_spaces = str_replace('+', ' ', $un_param);
+				$this->request->overwrite('un', $un_spaces);
+				$_GET['un'] = $un_spaces;
+			}
+		}
+
 		if (empty($this->core->seo_opt['url_rewrite']))
 		{
 			return;
+		}
+		// PATCH AUTOMATICA CATEGORIE MADRI (Ordinamento Decrescente Anti-Incrocio)
+		if (!defined('IN_ADMIN')) {
+			$cache_file = $this->phpbb_root_path . 'ext/phpbbseo/usu/cache/config.runtime.php';
+			if (file_exists($cache_file)) {
+				$settings = array();
+				$forum_urls = array();
+				@include($cache_file);
+				
+				if (!empty($forum_urls) && is_array($forum_urls)) {
+					$rem_ids = isset($settings['rem_ids']) ? (bool)$settings['rem_ids'] : false;
+					$current_sid = (!empty($this->user->session_id)) ? '?sid=' . $this->user->session_id : '';
+					
+					krsort($forum_urls);
+					
+					ob_start(function($html) use ($forum_urls, $rem_ids, $current_sid) {
+						if (empty($html)) return $html;
+						foreach ($forum_urls as $forum_id => $slug) {
+							$forum_id = (int)$forum_id;
+							
+							if ($rem_ids) {
+								$new_url = $slug . '/' . $current_sid;
+							} else {
+								$new_url = $slug . '-f' . $forum_id . '.html' . $current_sid;
+							}
+							
+							$html = preg_replace('/(?:\.\/)?app\.php\/board\/' . $forum_id . '/i', $new_url, $html);
+							$html = preg_replace('/(?:\.\/)?viewforum\.php\?(?:[a-z0-9_=&;]*)f=' . $forum_id . '(?:[a-z0-9_=&;]*)/i', $new_url, $html);
+						}
+						return $html;
+					});
+				}
+			}
 		}
 
 		// this helps fixing several cases of relative links
@@ -655,8 +700,8 @@ class listener implements EventSubscriberInterface
 			$rewriten = $this->core->url_rewrite($base_url);
 
 			$parts = explode('?', $rewriten, 2);
-			$rewriten = $parts[0];
-			$qs = $parts[1] ?? '';
+			$rewriten = $parts[0]; // Prende la stringa dell'URL pulito (Indice 0)
+			$qs = $parts[1] ?? ''; // Prende la query string se esiste (Indice 1)
 			if (
 				// rewriten urls are absolute
 				!preg_match('`^(https?\:)?//`i', $rewriten) ||
